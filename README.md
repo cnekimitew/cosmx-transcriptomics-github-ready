@@ -87,4 +87,8 @@ See `manuscript/code_availability.md`.
 
 ## License
 
-To be added
+## License
+
+The analysis code in this repository is made available under the MIT License. See the `LICENSE` file for details.
+
+This license applies only to the code in this repository. Raw data, processed Seurat objects, clinical metadata, images, and other restricted study materials are not included and may be subject to separate data-use restrictions.
