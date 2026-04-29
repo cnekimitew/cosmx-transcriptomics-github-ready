@@ -24,12 +24,3 @@ This repository was generated from an exploratory CosMx R Markdown notebook. The
 
 5. **Added reproducibility scaffolding**
    - Project file, README, DESCRIPTION, .gitignore, session-info output, and code-availability statement template.
-
-## Suggested next steps before uploading to GitHub
-
-- Replace `YEAR AUTHOR` in `LICENSE.md`.
-- Replace placeholder author/email in `DESCRIPTION`.
-- Copy `config/config_template.yml` to `config/config.yml` locally and test all scripts.
-- Add `renv::init()` and `renv::snapshot()` after the workflow runs successfully.
-- Confirm whether de-identified sample IDs and HIV/plaque metadata are approved for public release.
-- Add a Zenodo release if the manuscript requires a permanent DOI.
