@@ -1,0 +1,84 @@
+# Copy this file to config/config.yml and edit paths/parameters before running.
+
+paths:
+  input_seurat_rds: "data/processed/seurat_object.rds"
+  sample_metadata_csv: "data/sample_metadata_template.csv"
+  prepared_seurat_rds: "data/processed/cosmx_seurat_prepared.rds"
+  figures_dir: "outputs/figures"
+  tables_dir: "outputs/tables"
+
+seurat:
+  assay: "Nanostring"
+  celltype_source_col: "nb_clus"
+  celltype_publication_col: "celltype_pub"
+  sample_id_col: "Run_Tissue_name"
+  normalize: true
+  join_layers: true
+  normalization_method: "LogNormalize"
+  scale_factor: 10000
+
+plotting:
+  marker_genes:
+    - CXCL12
+    - CXCR4
+    - ACKR3
+    - CD163
+    - ABCA1
+    - CD68
+  molecule_overlay_genes:
+    - CXCL12
+    - CXCR4
+    - ACKR3
+    - CD163
+  dotplot_genes:
+    - TPM2
+    - ACTA2
+    - MYH11
+    - RGS5
+    - APOD
+    - MMP2
+    - CXCL14
+    - DCN
+    - LYZ
+    - HLA-DRA
+    - CD74
+    - C1QA
+    - C1QB
+    - C1QC
+    - CD14
+    - TCF7
+    - ACKR3
+    - TNFSF14
+    - VWF
+    - FABP4
+    - PECAM1
+    - CCL21
+    - CXCL12
+    - CD79A
+    - CCL19
+    - SPP1
+    - JCHAIN
+    - IGHA1
+    - IGHG1
+    - IGKC
+    - HBB
+    - KIT
+    - CCR7
+
+niches:
+  fov: "replace_with_fov_name"
+  kNN: 50
+  K: 7
+  max_cells: 8000
+  include_self: false
+  seed: 1
+
+differential_expression:
+  group_col: "HIV_status"
+  ident_1: "PLWH"
+  ident_2: "PWoH"
+  genes_to_label:
+    - CXCL12
+    - CXCR4
+    - ACKR3
+    - ABCA1

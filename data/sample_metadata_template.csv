@@ -1,0 +1,3 @@
+sample_id,HIV_status,plaque_type,include_in_analysis,notes
+sample_001,PWoH,Early,TRUE,replace_with_deidentified_sample_id
+sample_002,PLWH,Late,TRUE,replace_with_deidentified_sample_id
