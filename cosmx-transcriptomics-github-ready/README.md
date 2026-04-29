@@ -52,7 +52,8 @@ source("analysis/04_differential_expression.R")
 ```
 
 ## Data availability
-Large Seurat objects, raw CosMx outputs, processed data objects, and protected clinical metadata are not included in this GitHub repository. Publicly shareable data will be available through GEO accession GSE324056. If applicable, reviewer access tokens will be provided during peer review and public access will be enabled upon publication.
+
+Large Seurat objects, raw CosMx outputs, and protected clinical metadata are not be committed to GitHub. These data are available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE324056. Token will be made available upon publication of the data.
 
 
 ## Main workflow
@@ -85,7 +86,5 @@ Large Seurat objects, raw CosMx outputs, processed data objects, and protected c
 See `manuscript/code_availability.md`.
 
 ## License
-The analysis code in this repository is made available under the MIT License. See the `LICENSE` file for details.
 
-This license applies only to the code in this repository. Raw data, processed Seurat objects, clinical metadata, images, and other restricted study materials are not included and may be subject to separate data-use restrictions.
-
+To be added

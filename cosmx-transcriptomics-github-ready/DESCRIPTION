@@ -1,0 +1,26 @@
+Package: CosMxTranscriptomicsWorkflow
+Title: Reproducible CosMx Spatial Transcriptomics Analysis Workflow
+Version: 0.1.0
+Authors@R: person("Celestine", "Wanjalla", role = c("aut", "cre"), email = "celestine.wanjalla@vumc.org")
+Description: Reusable functions and scripts for CosMx/NanoString spatial transcriptomics analysis using Seurat objects, including metadata harmonization, visualization, spatial niche analysis, and differential expression plotting.
+License: MIT + file LICENSE.md
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports:
+    Seurat,
+    SeuratObject,
+    dplyr,
+    ggplot2,
+    ggrepel,
+    Matrix,
+    pheatmap,
+    readr,
+    tibble,
+    yaml,
+    FNN,
+    viridis
+Suggests:
+    testthat,
+    renv,
+    knitr,
+    rmarkdown
