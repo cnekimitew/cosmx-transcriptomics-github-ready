@@ -53,7 +53,8 @@ source("analysis/04_differential_expression.R")
 
 ## Data availability
 
-Large Seurat objects, raw CosMx outputs, and protected clinical metadata are not be committed to GitHub. Place public or de-identified metadata templates in `data/`, and provide permanent data-access instructions in the manuscript or repository release notes.
+Large Seurat objects, raw CosMx outputs, and protected clinical metadata are not be committed to GitHub. These data are available at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE324056 <img width="468" height="15" alt="image" src="https://github.com/user-attachments/assets/9595119e-9a94-4f42-b6e9-87369875d7a9" />
+
 
 ## Main workflow
 
