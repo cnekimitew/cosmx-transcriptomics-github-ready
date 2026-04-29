@@ -52,7 +52,7 @@ source("analysis/04_differential_expression.R")
 ```
 
 ## Data availability
-Large Seurat objects, raw CosMx outputs, processed data objects, and protected clinical metadata are not included in this GitHub repository. Publicly shareable data will be available through GEO accession GSE324056. If applicable, reviewer access tokens will be provided during peer review and public access will be enabled upon publication.
+Large Seurat objects, raw CosMx outputs, processed data objects, and protected clinical metadata are not included in this GitHub repository.Publicly shareable data will be available through GEO accession GSE324056. If applicable, reviewer access tokens will be provided during peer review and public access will be enabled upon publication.
 
 
 ## Main workflow
