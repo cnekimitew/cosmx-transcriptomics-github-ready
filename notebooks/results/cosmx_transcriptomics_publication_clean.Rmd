@@ -1,0 +1,781 @@
+---
+title: "CosMx Spatial Transcriptomics Analysis"
+author: "C. Wanjalla"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    number_sections: false
+    fig_caption: true
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 6
+)
+```
+
+# Overview
+
+This notebook provides a reproducible workflow for reviewing and analyzing
+CosMx/NanoString spatial transcriptomics data stored as a Seurat object.
+The workflow includes object loading, metadata review, sample annotation,
+spatial visualization, molecule overlays, UMAP visualization, marker-gene
+summary plots, spatial niche analysis, and differential expression.
+
+# User-defined paths and settings
+
+Edit the paths and variables in this section before running the notebook.
+Avoid committing files that contain local paths or protected participant
+identifiers to a public GitHub repository.
+
+```{r user-settings}
+# Input files
+seurat_rds <- "~/Downloads/cosmx-transcriptomics-github-ready/CosMx_seurat_reviewer_ready2.rds"
+giotto_rdata <- NA_character_  # optional; set to a valid .RData file if needed
+
+# Output directory
+output_dir <- "results"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Core object settings
+assay_use <- "Nanostring"
+sample_id_col <- "Run_Tissue_name"
+celltype_source_col <- "nb_clus"
+
+# Spatial plotting settings
+example_fov_index <- 1
+example_fov_number <- 9
+
+# Niche analysis settings
+niche_fov <- NULL  # if NULL, first image is used
+kNN <- 50
+K <- 7
+max_cells <- 8000
+set.seed(1)
+```
+
+# Load required packages
+
+```{r load-packages}
+required_packages <- c(
+  "Seurat", "SeuratObject", "dplyr", "ggplot2", "patchwork", "pheatmap",
+  "Matrix", "ggrepel", "future", "viridis"
+)
+
+missing_packages <- required_packages[!vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages) > 0) {
+  stop(
+    "Please install missing packages before running this notebook: ",
+    paste(missing_packages, collapse = ", ")
+  )
+}
+
+library(Seurat)
+library(SeuratObject)
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(pheatmap)
+library(Matrix)
+library(ggrepel)
+library(future)
+library(viridis)
+
+future::plan("multisession", workers = 4)
+options(stringsAsFactors = FALSE)
+```
+
+# Load CosMx Seurat object
+
+```{r load-seurat-object}
+if (!file.exists(seurat_rds)) {
+  stop("Seurat object not found. Update `seurat_rds` in the user-settings chunk.")
+}
+
+cosmx_obj <- readRDS(seurat_rds)
+DefaultAssay(cosmx_obj) <- assay_use
+cosmx_obj
+```
+
+# Optional: load Giotto object
+
+```{r load-giotto-object, eval=FALSE}
+# This section is optional and should only be run if a Giotto object is needed.
+# Keep it disabled for public/reviewer workflows unless Giotto-specific analyses are used.
+if (!is.na(giotto_rdata) && file.exists(giotto_rdata)) {
+  load(giotto_rdata)
+  # Example checks, assuming the Giotto object is named `gem`:
+  # show(gem)
+  # head(gem@spatial_locs)
+}
+```
+
+# Review object structure and metadata
+
+```{r review-object-structure}
+# Review metadata columns
+colnames(cosmx_obj@meta.data)
+
+# Review sample distribution
+if (sample_id_col %in% colnames(cosmx_obj@meta.data)) {
+  table(cosmx_obj@meta.data[[sample_id_col]], useNA = "ifany")
+} else {
+  stop("Sample ID column not found: ", sample_id_col)
+}
+
+# Review image/FOV names
+image_names <- Images(cosmx_obj)
+image_names
+```
+```{r}
+standardize_metadata_column <- function(obj, target_col) {
+  md_cols <- colnames(obj@meta.data)
+
+  if (target_col %in% md_cols) {
+    return(obj)
+  }
+
+  possible_cols <- c(
+    paste0(target_col, ".x"),
+    paste0(target_col, ".y"),
+    paste0(target_col, "_x"),
+    paste0(target_col, "_y")
+  )
+
+  matched_col <- possible_cols[possible_cols %in% md_cols][1]
+
+  if (!is.na(matched_col)) {
+    message("Using metadata column '", matched_col, "' as '", target_col, "'.")
+    obj[[target_col]] <- obj[[matched_col]][, 1]
+  } else {
+    warning("Could not find metadata column: ", target_col)
+  }
+
+  obj
+}
+
+cosmx_obj <- standardize_metadata_column(cosmx_obj, "HIV_status")
+cosmx_obj <- standardize_metadata_column(cosmx_obj, "plaque_type")
+```
+
+```{r}
+# Normalize sample names
+cosmx_obj$Run_Tissue_name_norm <- gsub(
+  "_",
+  ".",
+  as.character(cosmx_obj$Run_Tissue_name)
+)
+
+# Define plaque-stage groups
+late_samples <- c(
+  "R6101.1657DLAD",
+  "R6101.43PLAD",
+  "R6101.5394PLAD",
+  "R6101.5433LOM"
+)
+
+early_samples <- c(
+  "R6119.S1.2225",
+  "R6119.S2.4666",
+  "R6119.S3.5160",
+  "R6119.S4.5521"
+)
+
+# Assign plaque type
+cosmx_obj$plaque_type <- ifelse(
+  cosmx_obj$Run_Tissue_name_norm %in% early_samples,
+  "Early",
+  ifelse(
+    cosmx_obj$Run_Tissue_name_norm %in% late_samples,
+    "Late",
+    NA
+  )
+)
+
+cosmx_obj$plaque_type <- factor(
+  cosmx_obj$plaque_type,
+  levels = c("Early", "Late")
+)
+
+table(cosmx_obj$plaque_type, useNA = "ifany")
+```
+
+
+```{r review-assay-layers}
+# Review assay layers and available dimensions
+if (assay_use %in% names(cosmx_obj@assays)) {
+  SeuratObject::Layers(cosmx_obj[[assay_use]])
+}
+
+# Show a small expression matrix preview using the first available layer
+available_layers <- SeuratObject::Layers(cosmx_obj[[assay_use]])
+layer_use <- if ("counts" %in% available_layers) "counts" else available_layers[1]
+expr_preview <- GetAssayData(cosmx_obj, assay = assay_use, layer = layer_use)
+expr_preview[1:min(6, nrow(expr_preview)), 1:min(6, ncol(expr_preview))]
+```
+
+# Add publication-ready metadata columns
+
+Edit the mapping files below before publication. For public GitHub deposition,
+consider using de-identified sample labels such as `Sample_01`, `Sample_02`, etc.
+
+```{r annotate-metadata}
+# Create publication cell-type label column.
+# Replace this map with the final curated cell-type annotations.
+celltype_map <- c(
+  "a" = "Macrophage 2",
+  "b" = "COL9A3+ cells",
+  "c" = "B cells",
+  "d" = "Fibroblast 2",
+  "e" = "FN1+ cells",
+  "f" = "TCF7+ Monocytes"
+)
+
+if (!celltype_source_col %in% colnames(cosmx_obj@meta.data)) {
+  stop("Cell-type source column not found: ", celltype_source_col)
+}
+
+cosmx_obj$celltype_pub <- as.character(cosmx_obj@meta.data[[celltype_source_col]])
+cosmx_obj$celltype_pub[cosmx_obj$celltype_pub %in% names(celltype_map)] <-
+  celltype_map[cosmx_obj$celltype_pub[cosmx_obj$celltype_pub %in% names(celltype_map)]]
+cosmx_obj$celltype_pub[is.na(cosmx_obj$celltype_pub) | cosmx_obj$celltype_pub == ""] <- "Unknown"
+cosmx_obj$celltype_pub <- factor(cosmx_obj$celltype_pub)
+Idents(cosmx_obj) <- "celltype_pub"
+
+table(cosmx_obj$celltype_pub, useNA = "ifany")
+```
+
+```{r annotate-groups}
+# De-identify or externalize this mapping before public GitHub deposition.
+# Recommended: store sample annotations in data/sample_metadata.csv and read them here.
+
+cosmx_obj$HIV_status <- factor(cosmx_obj$HIV_status, levels = c("PWoH", "PLWH"))
+cosmx_obj$plaque_type <- factor(cosmx_obj$plaque_type, levels = c("Early", "Late"))
+
+table(cosmx_obj$HIV_status, useNA = "ifany")
+table(cosmx_obj$plaque_type, useNA = "ifany")
+```
+
+# Prepare assay layers
+
+```{r join-and-normalize-layers}
+# Join Seurat v5 layers when multiple per-image count layers are present.
+cosmx_obj <- JoinLayers(cosmx_obj, assay = assay_use)
+
+# Normalize if a normalized data layer is absent.
+available_layers <- SeuratObject::Layers(cosmx_obj[[assay_use]])
+if (!"data" %in% available_layers) {
+  cosmx_obj <- NormalizeData(
+    cosmx_obj,
+    assay = assay_use,
+    normalization.method = "LogNormalize",
+    scale.factor = 1e4
+  )
+}
+
+saveRDS(cosmx_obj, file.path(output_dir, "cosmx_seurat_prepared.rds"))
+```
+
+# Spatial visualization
+
+## Plot all slide images
+
+```{r plot-all-images, fig.height=7, fig.width=8}
+plot_image <- function(obj, image_name, group_by = NULL) {
+  ImageDimPlot(
+    obj,
+    fov = image_name,
+    group.by = group_by,
+    axes = TRUE,
+    border.color = NA
+  ) + ggtitle(image_name)
+}
+
+spatial_plots <- lapply(image_names, plot_image, obj = cosmx_obj, group_by = "celltype_pub")
+spatial_plots[[1]]
+```
+
+```{r save-all-image-plots, eval=FALSE}
+for (img in image_names) {
+  p <- plot_image(cosmx_obj, img, group_by = "celltype_pub")
+  ggsave(
+    filename = file.path(output_dir, paste0("spatial_", img, ".png")),
+    plot = p,
+    width = 8,
+    height = 7,
+    dpi = 300
+  )
+}
+```
+
+## Helper for FOV-level zooms
+
+```{r spatial-helper-functions}
+get_zoom_limits <- function(obj, image_name, sample_id, fov_number, sample_col = sample_id_col) {
+  cells_of_interest <- obj$id[
+    obj$fov == fov_number & obj@meta.data[[sample_col]] == sample_id
+  ]
+
+  centroid_data <- obj@images[[image_name]]$centroids
+  zoom_fov <- apply(
+    centroid_data@coords[centroid_data@cells %in% cells_of_interest, , drop = FALSE],
+    2,
+    range,
+    na.rm = TRUE
+  )
+
+  zoom_fov
+}
+
+plot_molecule_overlay <- function(
+  obj,
+  image_name,
+  zoom_limits = NULL,
+  molecules = c("CXCL12", "CXCR4", "ACKR3"),
+  alpha = 0.2,
+  mols_size = 0.8,
+  nmols = 1e5
+) {
+  p <- ImageDimPlot(
+    obj,
+    fov = image_name,
+    border.color = NA,
+    alpha = alpha,
+    molecules = molecules,
+    mols.size = mols_size,
+    nmols = nmols,
+    axes = FALSE
+  ) +
+    theme_classic()
+
+  if (!is.null(zoom_limits)) {
+    p <- p + coord_cartesian(
+      xlim = zoom_limits[, 2],
+      ylim = zoom_limits[, 1],
+      expand = FALSE
+    )
+  }
+
+  p
+}
+```
+
+```{r example-molecule-overlay}
+example_image <- image_names[example_fov_index]
+example_sample <- unique(cosmx_obj@meta.data[[sample_id_col]])[example_fov_index]
+
+zoom_limits <- get_zoom_limits(
+  obj = cosmx_obj,
+  image_name = example_image,
+  sample_id = example_sample,
+  fov_number = example_fov_number,
+  sample_col = sample_id_col
+)
+
+plot_molecule_overlay(
+  obj = cosmx_obj,
+  image_name = example_image,
+  zoom_limits = zoom_limits,
+  molecules = c("CXCL12", "CXCR4", "ACKR3", "CD163"),
+  alpha = 0.1,
+  mols_size = 1,
+  nmols = 1e5
+)
+```
+
+# UMAP and marker visualization
+
+```{r umap-by-celltype}
+DimPlot(
+  cosmx_obj,
+  group.by = "celltype_pub",
+  label = TRUE,
+  repel = TRUE
+) +
+  NoLegend() +
+  ggtitle("Cell-type annotations")
+```
+
+```{r marker-dotplot}
+marker_genes <- c(
+  "TPM2", "ACTA2", "MYH11", "RGS5", "APOD", "MMP2", "CXCL14", "DCN",
+  "LYZ", "HLA-DRA", "CD74", "C1QA", "C1QB", "C1QC", "FN1", "VCAN",
+  "CD14", "TCF7", "ACKR3", "TNFSF14", "VWF", "PECAM1", "CCL21",
+  "CXCL12", "CCL19", "SPP1", "JCHAIN", "IGHA1", "IGHG1", "IGKC"
+)
+
+marker_genes <- intersect(marker_genes, rownames(cosmx_obj))
+
+DotPlot(cosmx_obj, features = marker_genes, group.by = "celltype_pub") +
+  RotatedAxis() +
+  ggtitle("Marker gene expression by cell type")
+```
+
+# Spatial niche analysis
+
+```{r niche-helper-functions}
+.pick_xy <- function(coords) {
+  if (all(c("x", "y") %in% colnames(coords))) return(c("x", "y"))
+  if (all(c("X", "Y") %in% colnames(coords))) return(c("X", "Y"))
+  if (all(c("imagecol", "imagerow") %in% colnames(coords))) return(c("imagecol", "imagerow"))
+  if (all(c("col", "row") %in% colnames(coords))) return(c("col", "row"))
+  stop("Could not identify coordinate columns in GetTissueCoordinates().")
+}
+
+.find_cell_id_col <- function(coords, seurat_cells) {
+  common <- intersect(
+    colnames(coords),
+    c("cell", "Cell", "cell_id", "cellID", "barcode", "Barcode", "spot", "Spot")
+  )
+
+  for (cc in common) {
+    if (sum(as.character(coords[[cc]]) %in% seurat_cells) > 0) return(cc)
+  }
+
+  for (cc in colnames(coords)) {
+    v <- coords[[cc]]
+    if (!is.character(v) && !is.factor(v)) next
+    if (sum(as.character(v) %in% seurat_cells) > 0) return(cc)
+  }
+
+  NULL
+}
+
+.knn_index <- function(X, k) {
+  if (requireNamespace("FNN", quietly = TRUE)) {
+    nn <- FNN::get.knn(X, k = k)
+    return(list(idx = nn$nn.index, engine = "FNN"))
+  }
+
+  if (requireNamespace("RANN", quietly = TRUE)) {
+    nn <- RANN::nn2(X, k = k + 1)
+    return(list(idx = nn$nn.idx[, -1, drop = FALSE], engine = "RANN"))
+  }
+
+  stop("Install FNN or RANN before running niche analysis.")
+}
+
+compute_niches_for_fov <- function(
+  obj,
+  fov,
+  celltype_col = "celltype_pub",
+  kNN = 50,
+  K = 7,
+  max_cells = 8000,
+  include_self = FALSE,
+  seed = 1
+) {
+  md <- obj@meta.data
+  if (!celltype_col %in% colnames(md)) {
+    stop("Cell type column not found: ", celltype_col)
+  }
+
+  coords <- GetTissueCoordinates(obj, image = fov)
+  if (is.null(coords) || nrow(coords) == 0) stop("No tissue coordinates found for: ", fov)
+
+  seurat_cells <- colnames(obj)
+  cell_id_col <- .find_cell_id_col(coords, seurat_cells)
+  if (is.null(cell_id_col)) {
+    stop("No coordinate column matched Seurat cell IDs for image: ", fov)
+  }
+
+  xy <- .pick_xy(coords)
+  coords[[cell_id_col]] <- as.character(coords[[cell_id_col]])
+  coords <- coords[coords[[cell_id_col]] %in% seurat_cells, , drop = FALSE]
+
+  centroids <- aggregate(
+    coords[, xy, drop = FALSE],
+    by = list(cell = coords[[cell_id_col]]),
+    FUN = mean,
+    na.rm = TRUE
+  )
+  colnames(centroids) <- c("cell", "x", "y")
+  rownames(centroids) <- centroids$cell
+
+  if (nrow(centroids) < 100) {
+    stop("Too few centroided cells for niche analysis: ", nrow(centroids))
+  }
+
+  set.seed(seed)
+  if (nrow(centroids) > max_cells) {
+    centroids <- centroids[sample(rownames(centroids), max_cells), , drop = FALSE]
+  }
+
+  cells_use <- rownames(centroids)
+  ct <- as.character(md[cells_use, celltype_col])
+  ct[is.na(ct) | ct == ""] <- "Unknown"
+  ct_levels <- sort(unique(ct))
+  if (length(ct_levels) < 2) stop("Need at least two cell types to compute niches.")
+
+  X <- as.matrix(centroids[, c("x", "y"), drop = FALSE])
+  kNN <- min(kNN, nrow(X) - 1)
+  kNN <- max(kNN, 5)
+
+  nn <- .knn_index(X, k = kNN)
+  idx <- nn$idx
+
+  comp_mat <- matrix(
+    0,
+    nrow = nrow(idx),
+    ncol = length(ct_levels),
+    dimnames = list(cells_use, ct_levels)
+  )
+
+  ct_vec <- setNames(ct, cells_use)
+  for (i in seq_len(nrow(idx))) {
+    nbr_cells <- cells_use[idx[i, ]]
+    if (include_self) nbr_cells <- c(nbr_cells, cells_use[i])
+    comp_mat[i, ] <- as.numeric(table(factor(ct_vec[nbr_cells], levels = ct_levels)))
+  }
+
+  comp_prop <- comp_mat / pmax(rowSums(comp_mat), 1)
+
+  set.seed(seed)
+  K <- min(K, nrow(comp_prop) - 1)
+  K <- max(K, 2)
+  km <- kmeans(comp_prop, centers = K, nstart = 25)
+
+  niche <- paste0("Niche_", sprintf("%02d", km$cluster))
+  names(niche) <- rownames(comp_prop)
+
+  niche_cells <- data.frame(
+    cell = cells_use,
+    niche = niche[cells_use],
+    celltype = ct_vec[cells_use],
+    x = centroids[cells_use, "x"],
+    y = centroids[cells_use, "y"],
+    fov = fov,
+    stringsAsFactors = FALSE
+  )
+
+  list(
+    niche_cells = niche_cells,
+    comp_prop = comp_prop,
+    engine = nn$engine,
+    params = list(fov = fov, kNN = kNN, K = K, max_cells = max_cells)
+  )
+}
+```
+
+```{r run-niche-analysis}
+if (is.null(niche_fov)) niche_fov <- image_names[1]
+
+niche_result <- compute_niches_for_fov(
+  obj = cosmx_obj,
+  fov = niche_fov,
+  celltype_col = "celltype_pub",
+  kNN = kNN,
+  K = K,
+  max_cells = max_cells
+)
+
+niche_cells <- niche_result$niche_cells
+
+table(niche_cells$niche)
+head(niche_cells)
+```
+
+```{r plot-niches}
+ggplot(niche_cells, aes(x = x, y = y, color = niche)) +
+  geom_point(size = 0.7, alpha = 0.9) +
+  coord_fixed() +
+  theme_classic(base_size = 14) +
+  labs(
+    title = paste0("Spatial niches: ", niche_fov),
+    subtitle = paste0("K = ", K, "; kNN = ", kNN, "; engine = ", niche_result$engine),
+    x = "x coordinate",
+    y = "y coordinate",
+    color = "Niche"
+  )
+```
+
+```{r niche-composition}
+tab <- table(niche_cells$celltype, niche_cells$niche)
+tab_prop <- prop.table(tab, margin = 2) * 100
+
+pheatmap(
+  tab_prop,
+  scale = "none",
+  cluster_rows = FALSE,
+  cluster_cols = FALSE,
+  main = "Cell-type composition per niche"
+)
+```
+
+```{r niche-gene-expression}
+genes_use <- c("CXCL12", "ACKR3", "CD163", "CD68", "CXCR4", "APOE")
+genes_use <- intersect(genes_use, rownames(cosmx_obj))
+
+expr <- GetAssayData(cosmx_obj, assay = assay_use, layer = "data")
+cells_use <- intersect(colnames(expr), niche_cells$cell)
+
+if (length(genes_use) > 0 && length(cells_use) > 0) {
+  E <- expr[genes_use, cells_use, drop = FALSE]
+  niche_by_cell <- niche_cells$niche[match(cells_use, niche_cells$cell)]
+  niches <- sort(unique(niche_by_cell))
+
+  avg_mat <- sapply(niches, function(nm) {
+    cs <- cells_use[niche_by_cell == nm]
+    Matrix::rowMeans(E[, cs, drop = FALSE])
+  })
+
+  z <- t(scale(t(as.matrix(avg_mat))))
+  z[is.na(z)] <- 0
+
+  pheatmap(
+    z,
+    cluster_rows = TRUE,
+    cluster_cols = TRUE,
+    main = paste0("Niche marker expression: ", niche_fov)
+  )
+}
+```
+
+# Differential expression
+
+This section is optional. For manuscript-level inference, consider using
+sample-aware/pseudobulk models rather than treating cells as independent
+biological replicates.
+
+```{r differential-expression, eval=FALSE}
+# Example only: replace ident.1 and ident.2 with final group labels.
+Idents(cosmx_obj) <- "HIV_status"
+
+de_results <- FindMarkers(
+  cosmx_obj,
+  ident.1 = "PLWH",
+  ident.2 = "PWoH",
+  assay = assay_use,
+  slot = "data"
+)
+
+de_results$gene <- rownames(de_results)
+de_results$p_val_adj <- p.adjust(de_results$p_val, method = "BH")
+
+write.csv(de_results, file.path(output_dir, "de_results_PLWH_vs_PWoH.csv"), row.names = FALSE)
+```
+
+```{r volcano-plot, eval=FALSE}
+label_genes <- c("CXCL12", "CXCR4", "ACKR3")
+label_df <- de_results[de_results$gene %in% label_genes, , drop = FALSE]
+
+ggplot(de_results, aes(x = avg_log2FC, y = -log10(p_val_adj))) +
+  geom_point(alpha = 0.4, size = 1.5) +
+  geom_text_repel(data = label_df, aes(label = gene), max.overlaps = Inf) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+  theme_classic(base_size = 14) +
+  labs(
+    title = "Differential expression",
+    x = "Average log2 fold change",
+    y = "-log10 adjusted p-value"
+  )
+```
+```{r volcano-plot-with-significant-genes}
+
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(readr)
+
+# Identify fold-change column used by your Seurat version
+fc_col <- if ("avg_log2FC" %in% colnames(de_results)) {
+  "avg_log2FC"
+} else if ("avg_logFC" %in% colnames(de_results)) {
+  "avg_logFC"
+} else {
+  stop("Could not find avg_log2FC or avg_logFC in de_results.")
+}
+
+# Make sure gene names are present
+if (!"gene" %in% colnames(de_results)) {
+  de_results$gene <- rownames(de_results)
+}
+
+# Add plotting and significance columns
+de_results <- de_results %>%
+  mutate(
+    neg_log10_padj = -log10(pmax(p_val_adj, 1e-300)),
+    significance = case_when(
+      p_val_adj < 0.05 & .data[[fc_col]] >= 1  ~ "Higher in PLWH",
+      p_val_adj < 0.05 & .data[[fc_col]] <= -1 ~ "Higher in PWoH",
+      p_val_adj < 0.05                         ~ "Significant, modest FC",
+      TRUE                                     ~ "Not significant"
+    )
+  )
+
+# List significant genes
+significant_genes <- de_results %>%
+  filter(p_val_adj < 0.05) %>%
+  arrange(p_val_adj) %>%
+  select(gene, all_of(fc_col), p_val, p_val_adj, significance)
+
+significant_genes
+
+# Save significant genes table
+dir.create("results", showWarnings = FALSE)
+
+write_csv(
+  significant_genes,
+  "results/significant_genes_PLWH_vs_PWoH.csv"
+)
+
+# Label selected genes
+label_genes <- c("CXCL12", "CXCR4", "ACKR3", "CD163", "ABCA1", "CD209")
+label_df <- de_results %>%
+  filter(gene %in% label_genes)
+
+# Volcano plot
+ggplot(
+  de_results,
+  aes(x = .data[[fc_col]], y = neg_log10_padj, color = significance)
+) +
+  geom_point(alpha = 0.6, size = 1.6) +
+  geom_text_repel(
+    data = label_df,
+    aes(label = gene),
+    max.overlaps = Inf,
+    size = 4
+  ) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed"
+  ) +
+  geom_vline(
+    xintercept = c(-1, 1),
+    linetype = "dashed"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Higher in PLWH" = "red",
+      "Higher in PWoH" = "blue",
+      "Significant, modest FC" = "orange",
+      "Not significant" = "gray70"
+    )
+  ) +
+  theme_classic(base_size = 14) +
+  labs(
+    title = "Differential expression: PLWH vs PWoH",
+    x = "Average log2 fold change",
+    y = "-log10 adjusted p-value",
+    color = "Gene category"
+  )
+```
+```
+
+
+# Session information
+
+```{r session-info}
+sessionInfo()
+```
