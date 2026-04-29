@@ -14,9 +14,3 @@ This repository contains reproducible R code for analysis and visualization of C
 ├── notebooks/                 # Optional R Markdown workflows
 ├── manuscript/                # Code/data availability language
 └── outputs/                   # Generated outputs; ignored by git
-
-## Study overview video
-
-A study overview video is available to provide context for the CosMx spatial transcriptomics analyses in this repository. The video summarizes the scientific rationale, tissue cohorts, spatial profiling approach, and major biological findings.
-
-[Watch the study overview video](PASTE_VIDEO_LINK_HERE)
